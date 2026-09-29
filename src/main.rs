@@ -8,20 +8,33 @@ use sha2::{Digest, Sha256};
 #[command(version, about, long_about = None)]
 struct Args {
 
+	/// encrypt/decrypt password
     #[arg(short, long)]
     pass: Option<String>,
 
+	/// key
 	#[arg(short, long)]
-	key: String,
+	key: Option<String>,
 
+	/// value
 	#[arg(short, long)]
-	word: Option<String>,
+	value: Option<String>,
+
+	/// look all name/password
+	#[arg(long)]
+	take: bool,
 }
 
 fn main() -> std::io::Result<()> {
 	let mut arg = Args::parse();
 	if arg.pass.is_none() {
 		arg.pass = Some(rpassword::prompt_password("password: ")?);
+	}
+	if !arg.take {
+		if arg.key.is_none() {
+			arg.key = Some(rpassword::prompt_password("key: ")?);
+		}
+		arg.key = Some(arg.key.as_ref().unwrap().replace(" ", "_"));
 	}
 
 	let gcm = Aes256Gcm::new_from_slice(&Sha256::digest(arg.pass.unwrap())).unwrap();
@@ -52,8 +65,13 @@ fn main() -> std::io::Result<()> {
 			acc
 		})
 	};
-	if let Some(word) = arg.word {
-		passdict.push((arg.key.trim(), word.trim()));
+	if arg.take {
+		passdict.iter().for_each(|f| {
+			println!("{}: {}", f.0, f.1)
+		});
+	}
+	if let Some(word) = arg.value {
+		passdict.push((arg.key.as_mut().unwrap().trim(), word.trim()));
 		let mut text = String::new();
 		passdict.into_iter().for_each(|f| {
 			text.push_str(f.0);
@@ -67,9 +85,10 @@ fn main() -> std::io::Result<()> {
 		passfile.write_all(&gcm.encrypt(&nonce, text.as_bytes()).unwrap())?;
 		
 	} else {
+		let key = arg.key.unwrap();
 		passdict.iter().for_each(|f| {
-			if f.0.contains(&arg.key) {
-				println!("查询到{}: {}", f.0, f.1);
+			if f.0.contains(&key) {
+				println!("\n{}: {}", f.0, f.1);
 			}
 		});
 	}
