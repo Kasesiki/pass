@@ -20,6 +20,10 @@ struct Args {
 	#[arg(short, long)]
 	value: Option<String>,
 
+	/// random password
+	#[arg(short, long)]
+	random: bool,
+
 	/// look all name/password
 	#[arg(long)]
 	take: bool,
@@ -69,6 +73,7 @@ fn main() -> std::io::Result<()> {
 		passdict.iter().for_each(|f| {
 			println!("{}: {}", f.0, f.1)
 		});
+		return Ok(());
 	}
 	if let Some(word) = arg.value {
 		passdict.push((arg.key.as_mut().unwrap().trim(), word.trim()));
@@ -85,9 +90,9 @@ fn main() -> std::io::Result<()> {
 		passfile.write_all(&gcm.encrypt(&nonce, text.as_bytes()).unwrap())?;
 		
 	} else {
-		let key = arg.key.unwrap();
+		let key = arg.key.unwrap().to_ascii_lowercase();
 		passdict.iter().for_each(|f| {
-			if f.0.contains(&key) {
+			if f.0.to_ascii_lowercase().contains(&key) {
 				println!("\n{}: {}", f.0, f.1);
 			}
 		});
