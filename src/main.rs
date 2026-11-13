@@ -1,7 +1,8 @@
 use std::{fs::File, io::{Read, Seek, Write}, path::Path};
 
-use aes_gcm::{Aes256Gcm, AesGcm, KeyInit, Nonce, aead::{Aead, Generate}, aes::Aes256};
+use aes_gcm::{Aes256Gcm, AesGcm, KeyInit, Nonce, aead::{Aead, Generate, rand_core}, aes::Aes256};
 use clap::{Parser};
+use rand::{TryRng, rngs::SysRng};
 use sha2::{Digest, Sha256, digest::{consts::{B0, B1}, typenum::{UInt, UTerm}}};
 
 #[derive(Parser, Debug)]
@@ -60,6 +61,21 @@ fn main() -> std::io::Result<()> {
 
 	if arg.random {
 		// todo
+		let mut randbyte = [0u8; 16];
+		SysRng.try_fill_bytes(&mut randbyte)?;
+		let mut output_password = String::new();
+		randbyte.iter().for_each(|f| { 
+			let f = *f % 62;
+			if f < 10 {
+				output_password.push((b'0' + f - 1) as char);
+			}else if f < 36 {
+				output_password.push((b'A' + f - 11) as char);
+			} else {
+				output_password.push((b'a' + f - 37) as char);
+			}
+		});
+		passdict.add(key, output_password)?;
+		
 		return Ok(());
 	}
 
@@ -118,6 +134,7 @@ impl Passdict {
 	}
 
 	fn add(&mut self, key: String, value: String) -> std::io::Result<()> {
+		println!("{}: {}", key, value);
 		self.dict.push((key, value));
 		self.rewrite()
 	}
