@@ -24,6 +24,9 @@ struct Args {
 	#[arg(short, long)]
 	random: bool,
 
+	#[arg(short, long)]
+	delete: bool,
+
 	/// look all name/password
 	#[arg(long)]
 	take: bool,
@@ -60,8 +63,15 @@ fn main() -> std::io::Result<()> {
 		return Ok(());
 	}
 
-	passdict.get(&key);
+	if arg.delete {
+		if let Some(x) = passdict.del(&key) {
+			return x.map(|_| ());
+		} else {
+			println!("未找到该key");
+		}
+	}
 
+	passdict.get(&key);
 	
 	Ok(())
 }
