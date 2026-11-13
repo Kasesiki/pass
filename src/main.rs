@@ -1,8 +1,8 @@
-use std::{io::{Read, Seek, Write}, path::Path};
+use std::{fs::File, io::{Read, Seek, Write}, path::Path};
 
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::{Aead, Generate}};
-use clap::Parser;
-use sha2::{Digest, Sha256};
+use aes_gcm::{Aes256Gcm, AesGcm, KeyInit, Nonce, aead::{Aead, Generate}, aes::Aes256};
+use clap::{Parser};
+use sha2::{Digest, Sha256, digest::{consts::{B0, B1}, typenum::{UInt, UTerm}}};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -30,72 +30,129 @@ struct Args {
 }
 
 fn main() -> std::io::Result<()> {
-	let mut arg = Args::parse();
-	if arg.pass.is_none() {
-		arg.pass = Some(rpassword::prompt_password("password: ")?);
-	}
-	if !arg.take {
-		if arg.key.is_none() {
-			arg.key = Some(rpassword::prompt_password("key: ")?);
-		}
-		arg.key = Some(arg.key.as_ref().unwrap().replace(" ", "_"));
-	}
-
-	let gcm = Aes256Gcm::new_from_slice(&Sha256::digest(arg.pass.unwrap())).unwrap();
-	
-	let mut home = std::env::home_dir().unwrap().to_string_lossy().to_string() + "/.config/pass";	
-	std::fs::create_dir_all(Path::new(&home))?;
-	home += "/password";
-	let newfile = !std::fs::exists(&home)?;
-	let mut passfile = std::fs::OpenOptions::new().read(true).write(true).create(true).open(&home)?;
-
-	let mut passdict = if newfile {
-		vec![]
+	let arg = Args::parse();
+	let pass = if let Some(pass) = arg.pass {
+		pass
 	} else {
-		let mut nonce = [0u8; 12];
-		passfile.read_exact(&mut nonce)?;
-		let nonce  = Nonce::from(nonce);
-		let mut buf = vec![];
-		passfile.read_to_end(&mut buf)?;
-		Box::leak(Box::new(String::from_utf8(gcm.decrypt(&nonce, buf.as_slice()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Incorrect password"))?).unwrap())).split("\n").fold(vec![], |mut acc: Vec<(&str, &str)>, f| {	
-			if f.is_empty() {
-				return acc;
-			}
-			
-			let mut d = f.splitn(2, " ");
-			if let Some(value) = d.next().zip(d.next()) {
-				acc.push(value);
-			}
-			acc
-		})
+		rpassword::prompt_password("password: ")?
 	};
+
+	let mut passdict = Passdict::init(pass)?;
+
 	if arg.take {
-		passdict.iter().for_each(|f| {
-			println!("{}: {}", f.0, f.1)
-		});
+		passdict.take();
 		return Ok(());
 	}
-	if let Some(word) = arg.value {
-		passdict.push((arg.key.as_mut().unwrap().trim(), word.trim()));
-		let mut text = String::new();
-		passdict.into_iter().for_each(|f| {
-			text.push_str(f.0);
-			text.push(' ');
-			text.push_str(f.1);
-			text.push('\n');
-		});
-		passfile.seek(std::io::SeekFrom::Start(0))?;
-		let nonce = Nonce::generate();
-		passfile.write_all(&nonce)?;
-		passfile.write_all(&gcm.encrypt(&nonce, text.as_bytes()).unwrap())?;
-		
+
+	let key = if let Some(key) = &arg.key {
+		key.to_owned()
 	} else {
-		let key = arg.key.unwrap().to_ascii_lowercase();
-		passdict.iter().for_each(|f| {
-			if f.0.to_ascii_lowercase().contains(&key) {
-				println!("\n{}: {}", f.0, f.1);
+		rpassword::prompt_password("key: ")?
+	};
+
+	if let Some(value) = arg.value {
+		passdict.add(key, value)?;
+		return Ok(());
+	}
+
+	if arg.random {
+		// todo
+		return Ok(());
+	}
+
+	passdict.get(&key);
+
+	
+	Ok(())
+}
+
+pub struct Passdict {
+	dict: Vec<(String, String)>,
+	gcm: AesGcm<Aes256, UInt<UInt<UInt<UInt<UTerm, B1>, B1>, B0>, B0>>,
+	passfile: File,
+}
+
+impl Passdict {
+	fn init(key: String) -> std::io::Result<Passdict> {
+		let gcm = Aes256Gcm::new_from_slice(&Sha256::digest(key)).unwrap();
+		
+		let mut home = std::env::home_dir().unwrap();
+		home.push(".config/pass");	
+		std::fs::create_dir_all(Path::new(&home))?;
+		home.push("password");
+		let newfile = !std::fs::exists(&home)?;
+		let mut passfile = std::fs::OpenOptions::new().read(true).write(true).create(true).open(&home)?;
+
+		let passdict = if newfile {
+			vec![]
+		} else {
+			let mut nonce = [0u8; 12];
+			passfile.read_exact(&mut nonce)?;
+			let nonce  = Nonce::from(nonce);
+			let mut buf = vec![];
+			passfile.read_to_end(&mut buf)?;
+			let f = String::from_utf8(gcm.decrypt(&nonce, buf.as_slice()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Incorrect password"))?).unwrap();
+			f.split("\n").fold(vec![], |mut acc: Vec<(String, String)>, f: &str| {	
+				if f.is_empty() {
+					return acc;
+				}
+				
+				let mut d = f.splitn(2, " ");
+				if let Some(value) = d.next().zip(d.next()) {
+					acc.push((value.0.to_string(), value.1.to_string()));
+				}
+				acc
+			})
+		};
+		Ok(Passdict { dict: passdict, gcm, passfile })
+	}
+
+	fn add(&mut self, key: String, value: String) -> std::io::Result<()> {
+		self.dict.push((key, value));
+		self.rewrite()
+	}
+
+	fn del(&mut self, key: &str) -> Option<std::io::Result<String>> {
+		for i in 0..self.dict.len() {
+			let v = self.dict.get(i).unwrap().to_owned();
+			if v.0 == key {
+				self.dict.remove(i);
+				let r = self.rewrite();
+				let r= r.map(|_| v.1);
+				return Some(r);
+			}
+		}
+		return None
+	}
+
+	fn get(&self, key: &str) {
+		let k = key.to_ascii_lowercase();
+		self.dict.iter().for_each(|f| {
+			if f.0.to_ascii_lowercase().contains(&k) {
+				println!("{}: {}", f.0, f.1)
 			}
 		});
 	}
-	Ok(())
+
+	fn rewrite(&mut self) -> std::io::Result<()> {
+		let mut text = String::new();
+		self.dict.iter().for_each(|f| {
+			text.push_str(&f.0);
+			text.push(' ');
+			text.push_str(&f.1);
+			text.push('\n');
+		});
+		self.passfile.seek(std::io::SeekFrom::Start(0))?;
+		let nonce = Nonce::generate();
+		self.passfile.write_all(&nonce)?;
+		self.passfile.write_all(&self.gcm.encrypt(&nonce, text.as_bytes()).unwrap())?;
+		Ok(())
+		
+	}
+
+	fn take(&self) {
+		self.dict.iter().for_each(|f| {
+			println!("{}: {}", f.0, f.1)
+		});
+	}
 }
