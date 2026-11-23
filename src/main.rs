@@ -25,7 +25,7 @@ struct Args {
 	#[arg(short, long)]
 	random: bool,
 
-	#[arg(short, long)]
+	#[arg(short, long, conflicts_with_all(["random", "value", "take"]))]
 	delete: bool,
 
 	/// look all name/password
