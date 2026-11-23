@@ -1,6 +1,6 @@
 use std::{fs::File, io::{Read, Seek, Write}, path::Path};
 
-use aes_gcm::{Aes256Gcm, AesGcm, KeyInit, Nonce, aead::{Aead, Generate, rand_core}, aes::Aes256};
+use aes_gcm::{Aes256Gcm, AesGcm, KeyInit, Nonce, aead::{Aead, Generate}, aes::Aes256};
 use clap::{Parser};
 use rand::{TryRng, rngs::SysRng};
 use sha2::{Digest, Sha256, digest::{consts::{B0, B1}, typenum::{UInt, UTerm}}};
@@ -80,11 +80,13 @@ fn main() -> std::io::Result<()> {
 	}
 
 	if arg.delete {
+		
 		if let Some(x) = passdict.del(&key) {
 			return x.map(|_| ());
 		} else {
 			println!("未找到该key");
 		}
+		return Ok(());
 	}
 
 	passdict.get(&key);
@@ -170,6 +172,7 @@ impl Passdict {
 			text.push('\n');
 		});
 		self.passfile.seek(std::io::SeekFrom::Start(0))?;
+		self.passfile.set_len(0)?;
 		let nonce = Nonce::generate();
 		self.passfile.write_all(&nonce)?;
 		self.passfile.write_all(&self.gcm.encrypt(&nonce, text.as_bytes()).unwrap())?;
